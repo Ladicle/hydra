@@ -83,6 +83,7 @@
 (require 'cl-lib)
 (require 'lv)
 (require 'ring)
+(require 'posframe)
 
 (defvar hydra-curr-map nil
   "The keymap of the current Hydra called.")
@@ -207,9 +208,12 @@ the body or the head."
   :type 'sexp
   :group 'hydra)
 
-(defcustom hydra-lv t
-  "When non-nil, `lv-message' (not `message') will be used to display hints."
-  :type 'boolean)
+(defcustom hydra-display-type 'lv
+  "When non-nil"
+  :type '(choice (const lv)
+                 (const message)
+                 (const posframe))
+  :group 'hydra)
 
 (defcustom hydra-verbose nil
   "When non-nil, hydra will issue some non essential style warnings."
@@ -230,6 +234,11 @@ When calling a head with a simple command, hydra will lookup for a potential
 remap command according to the current active keymap and call it instead if
 found"
   :type 'boolean)
+
+(defcustom hydra-posframe-buffer "*hydra-posframe-buffer*"
+  "Name of the hydra posframe buffer."
+  :type 'string
+  :group 'hydra)
 
 (make-obsolete-variable
  'hydra-key-format-spec
@@ -264,6 +273,11 @@ Exitable only through a blue head.")
   '((t (:foreground "#367588" :bold t)))
   "Teal body has blue heads and warns on intercepting non-heads.
 Exitable only through a blue head.")
+
+(defface hydra-posframe-face
+  '((t :inherit default))
+  "The background and foreground color of the posframe.
+Only `background' and `foreground` are used in this face.")
 
 ;;* Fontification
 (defun hydra-add-font-lock ()
@@ -486,9 +500,10 @@ Remove :color key. And sort the plist alphabetically."
   (setq hydra-curr-map nil)
   (unless (and hydra--ignore
                (null hydra--work-around-dedicated))
-    (if hydra-lv
-        (lv-delete-window)
-      (message "")))
+    (pcase hydra-display-type
+      ('lv (lv-delete-window))
+      ('message (message ""))
+      ('posframe (posframe-hide hydra-posframe-buffer))))
   nil)
 
 (defvar hydra-head-format "[%s]: "
@@ -860,7 +875,7 @@ BODY-AFTER-EXIT is added to the end of the wrapper."
                       ,(hydra--call-interactively cmd (cadr head))
                     ((quit error)
                      (message (error-message-string err))
-                     (unless hydra-lv
+                     (if (eq hydra-display-type 'message)
                        (sit-for 0.8)))))
               ,(if (and body-idle (eq (cadr head) 'body))
                    `(hydra-idle-message ,body-idle ,hint ',name)
@@ -904,9 +919,20 @@ KEY is forwarded to `plist-get'."
            (message (eval hint)))
           (t
            (when hydra-is-helpful
-             (if hydra-lv
-                 (lv-message (eval hint))
-               (message (eval hint))))))))
+             (pcase hydra-display-type
+               ('lv (lv-message (eval hint)))
+               ('message (message (eval hint)))
+               ('posframe (posframe-show
+                           hydra-posframe-buffer
+                           :poshandler 'posframe-poshandler-frame-center
+                           :foreground-color (face-foreground 'hydra-posframe-face nil t)
+                           :background-color (face-background 'hydra-posframe-face nil t)
+                           :string (eval hint))
+                          (let ((current-frame
+                                 (buffer-local-value 'posframe--frame
+                                                     (get-buffer hydra-posframe-buffer))))
+	                    (redirect-frame-focus current-frame
+                                                  (frame-parent current-frame))))))))))
 
 (defmacro hydra--make-funcall (sym)
   "Transform SYM into a `funcall' to call it."
